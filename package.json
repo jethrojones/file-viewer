@@ -1,7 +1,7 @@
 {
   "name": "obsidian-csv-viewer",
-  "version": "1.4.1",
-  "description": "View CSV, VTT, Log, SRT, and more directly in Obsidian.",
+  "version": "1.4.2",
+  "description": "View CSV, VTT, Log, SRT, and more.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

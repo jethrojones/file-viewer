@@ -1,9 +1,9 @@
 {
   "id": "csv-viewer",
   "name": "File Viewer",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "minAppVersion": "1.4.0",
-  "description": "View CSV, VTT, Log, SRT, and more directly in Obsidian.",
+  "description": "View CSV, VTT, Log, SRT, and more.",
   "author": "Life Lab",
   "authorUrl": "https://discoverlifelab.com",
   "isDesktopOnly": false
