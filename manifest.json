@@ -1,9 +1,9 @@
 {
   "id": "csv-viewer",
   "name": "File Viewer",
-  "version": "1.4.6",
+  "version": "1.5.0",
   "minAppVersion": "1.4.0",
-  "description": "View CSV, JSON, VTT, Log, SRT, and more with purpose-built file views.",
+  "description": "View CSV, JSONL (with jq), JSON, VTT, Log, SRT, and more with purpose-built file views.",
   "author": "Jethro Jones",
   "authorUrl": "https://jethrojones.com",
   "isDesktopOnly": false

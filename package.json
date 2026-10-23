@@ -1,6 +1,6 @@
 {
   "name": "file-viewer",
-  "version": "1.4.6",
+  "version": "1.5.0",
   "description": "View CSV, JSON, VTT, Log, SRT, and more with purpose-built file views.",
   "main": "main.js",
   "scripts": {
@@ -41,5 +41,8 @@
     "onlyBuiltDependencies": [
       "esbuild"
     ]
+  },
+  "dependencies": {
+    "jq-wasm": "^3.0.0-jq-1.8.2"
   }
 }

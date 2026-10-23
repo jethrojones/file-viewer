@@ -1,5 +1,8 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting, TextFileView } from 'obsidian';
+import { App, Notice, Plugin, PluginSettingTab, Setting, TextFileView, WorkspaceLeaf } from 'obsidian';
+import { Jq, loadJq } from 'jq-wasm/inline';
 import { parseCSV, parseTranscript, serializeCSV, TranscriptCue, TranscriptFormat } from './csv-parser';
+import { parseExtensionList } from './extensions';
+import { buildQuery, formatJsonlValue, JsonlEntry, parseJsonl, tagEntries } from './jsonl';
 import { formatJson, minifyJson, validateJson } from './json-utils';
 import { SUPPORT_ISSUES_URL } from './support';
 
@@ -7,6 +10,7 @@ const CSV_VIEW_TYPE = 'csv-view';
 const LOG_VIEW_TYPE = 'log-view';
 const TRANSCRIPT_VIEW_TYPE = 'transcript-view';
 const JSON_VIEW_TYPE = 'json-view';
+const JSONL_VIEW_TYPE = 'jsonl-view';
 
 interface CSVViewerSettings {
     enableCsvViewer: boolean;
@@ -14,6 +18,9 @@ interface CSVViewerSettings {
     enableVttViewer: boolean;
     enableSrtViewer: boolean;
     enableJsonViewer: boolean;
+    enableJsonlViewer: boolean;
+    /** Viewer key -> user-typed extra extensions, e.g. { json: 'jsonl, ndjson' }. */
+    extraExtensions: Record<string, string>;
 }
 
 const DEFAULT_SETTINGS: CSVViewerSettings = {
@@ -21,8 +28,70 @@ const DEFAULT_SETTINGS: CSVViewerSettings = {
     enableLogViewer: true,
     enableVttViewer: true,
     enableSrtViewer: true,
-    enableJsonViewer: true
+    enableJsonViewer: true,
+    enableJsonlViewer: true,
+    extraExtensions: {}
 };
+
+interface ViewerConfig {
+    key: string;
+    viewType: string;
+    enable: 'enableCsvViewer' | 'enableLogViewer' | 'enableVttViewer' | 'enableSrtViewer' | 'enableJsonViewer' | 'enableJsonlViewer';
+    name: string;
+    desc: string;
+    extensions: string[];
+}
+
+const VIEWERS: ViewerConfig[] = [
+    {
+        key: 'csv',
+        viewType: CSV_VIEW_TYPE,
+        enable: 'enableCsvViewer',
+        name: 'CSV viewer',
+        desc: 'Open .csv files in the interactive table viewer.',
+        extensions: ['csv']
+    },
+    {
+        key: 'log',
+        viewType: LOG_VIEW_TYPE,
+        enable: 'enableLogViewer',
+        name: 'Log / text viewer',
+        desc: 'Open .log and .txt files in the filtered log viewer.',
+        extensions: ['log', 'txt']
+    },
+    {
+        key: 'vtt',
+        viewType: TRANSCRIPT_VIEW_TYPE,
+        enable: 'enableVttViewer',
+        name: '.vtt transcript viewer',
+        desc: 'Open .vtt files in the transcript viewer.',
+        extensions: ['vtt']
+    },
+    {
+        key: 'srt',
+        viewType: TRANSCRIPT_VIEW_TYPE,
+        enable: 'enableSrtViewer',
+        name: '.srt transcript viewer',
+        desc: 'Open .srt files in the transcript viewer.',
+        extensions: ['srt']
+    },
+    {
+        key: 'json',
+        viewType: JSON_VIEW_TYPE,
+        enable: 'enableJsonViewer',
+        name: 'JSON viewer',
+        desc: 'Open .json files in an editable JSON viewer with validation and formatting controls.',
+        extensions: ['json']
+    },
+    {
+        key: 'jsonl',
+        viewType: JSONL_VIEW_TYPE,
+        enable: 'enableJsonlViewer',
+        name: 'JSONL viewer',
+        desc: 'Open .jsonl files as pretty-printed records with a jq filter bar.',
+        extensions: ['jsonl']
+    }
+];
 
 type LogLevel = 'error' | 'warning' | 'info' | 'debug' | 'default';
 
@@ -869,8 +938,170 @@ class JsonView extends TextFileView {
     }
 }
 
+class JsonlView extends TextFileView {
+    data: string = '';
+    entries: JsonlEntry[] = [];
+    query: string = '';
+    plugin: CSVViewerPlugin;
+    renderToken: number = 0;
+    debounceTimer: number = 0;
+
+    constructor(leaf: WorkspaceLeaf, plugin: CSVViewerPlugin) {
+        super(leaf);
+        this.plugin = plugin;
+    }
+
+    getViewType(): string {
+        return JSONL_VIEW_TYPE;
+    }
+
+    getDisplayText(): string {
+        return this.file?.basename || 'JSONL';
+    }
+
+    getIcon(): string {
+        return 'list';
+    }
+
+    onOpen(): Promise<void> {
+        this.contentEl.addClass('jsonl-view-container');
+        return Promise.resolve();
+    }
+
+    onClose(): Promise<void> {
+        window.clearTimeout(this.debounceTimer);
+        this.contentEl.empty();
+        return Promise.resolve();
+    }
+
+    getViewData(): string {
+        return this.data;
+    }
+
+    setViewData(data: string, _clear: boolean): void {
+        this.data = data;
+        this.entries = parseJsonl(data);
+        this.renderJsonl();
+    }
+
+    clear(): void {
+        this.data = '';
+        this.entries = [];
+        this.contentEl.empty();
+    }
+
+    renderJsonl(): void {
+        this.contentEl.empty();
+
+        const container = this.contentEl.createDiv({ cls: 'jsonl-view-content' });
+        const toolbar = container.createDiv({ cls: 'jsonl-view-toolbar' });
+
+        const queryInput = toolbar.createEl('input', {
+            cls: 'jsonl-view-query',
+            attr: {
+                type: 'text',
+                placeholder: 'jq filter, e.g. select(.level == "error") | .msg',
+                'aria-label': 'Jq filter',
+                autocapitalize: 'off',
+                autocomplete: 'off',
+                autocorrect: 'off',
+                spellcheck: 'false'
+            }
+        });
+        queryInput.value = this.query;
+
+        const info = toolbar.createDiv({ cls: 'jsonl-view-info' });
+        const body = container.createDiv({ cls: 'jsonl-lines' });
+
+        const apply = () => {
+            window.clearTimeout(this.debounceTimer);
+            void this.renderBody(body, info);
+        };
+
+        queryInput.addEventListener('input', () => {
+            this.query = queryInput.value;
+            window.clearTimeout(this.debounceTimer);
+            this.debounceTimer = window.setTimeout(apply, 250);
+        });
+
+        queryInput.addEventListener('keydown', (event: KeyboardEvent) => {
+            if (event.key === 'Enter') {
+                apply();
+            }
+        });
+
+        apply();
+    }
+
+    async renderBody(body: HTMLElement, info: HTMLElement): Promise<void> {
+        const token = ++this.renderToken;
+        const total = this.entries.length;
+        body.empty();
+        info.removeClass('error');
+
+        if (!this.query.trim()) {
+            info.setText(`${total.toLocaleString()} lines`);
+            for (const entry of this.entries) {
+                this.renderEntry(body, entry.number, entry.value, entry.error);
+            }
+            return;
+        }
+
+        let rows: { n: number, o: unknown }[];
+        try {
+            const jq = await this.plugin.getJq();
+            if (token !== this.renderToken) return;
+            rows = jq.json<{ n: number, o: unknown }>(tagEntries(this.entries), buildQuery(this.query));
+        } catch (error) {
+            if (token !== this.renderToken) return;
+            info.setText(this.getJqErrorMessage(error));
+            info.addClass('error');
+            return;
+        }
+
+        if (token !== this.renderToken) return;
+
+        info.setText(`${rows.length.toLocaleString()} results from ${total.toLocaleString()} lines`);
+
+        if (rows.length === 0) {
+            body.createDiv({ cls: 'jsonl-empty', text: 'No lines match this filter' });
+            return;
+        }
+
+        for (const row of rows) {
+            this.renderEntry(body, row.n, row.o);
+        }
+    }
+
+    renderEntry(body: HTMLElement, lineNumber: number, value: unknown, error?: string): void {
+        const row = body.createDiv({ cls: 'jsonl-entry' + (error ? ' invalid' : '') });
+        row.createDiv({ cls: 'jsonl-line-number', text: String(lineNumber) });
+
+        if (error) {
+            row.createDiv({ cls: 'jsonl-error', text: `Invalid JSON: ${error}` });
+            return;
+        }
+
+        row.createEl('pre', { cls: 'jsonl-json', text: formatJsonlValue(value) });
+    }
+
+    getJqErrorMessage(error: unknown): string {
+        const stderr = (error as { stderr?: string } | null)?.stderr;
+        const message = stderr || (error instanceof Error ? error.message : String(error));
+        return message.replace(/^jq: error \(at <stdin>:\d+\):\s*/gm, '').trim();
+    }
+}
+
 export default class CSVViewerPlugin extends Plugin {
     settings: CSVViewerSettings;
+    jqPromise?: Promise<Jq>;
+
+    getJq(): Promise<Jq> {
+        if (!this.jqPromise) {
+            this.jqPromise = loadJq();
+        }
+        return this.jqPromise;
+    }
 
     async onload() {
         await this.loadSettings();
@@ -879,26 +1110,20 @@ export default class CSVViewerPlugin extends Plugin {
         this.registerView(LOG_VIEW_TYPE, (leaf) => new LogView(leaf));
         this.registerView(TRANSCRIPT_VIEW_TYPE, (leaf) => new TranscriptView(leaf));
         this.registerView(JSON_VIEW_TYPE, (leaf) => new JsonView(leaf));
+        this.registerView(JSONL_VIEW_TYPE, (leaf) => new JsonlView(leaf, this));
 
-        if (this.settings.enableCsvViewer) {
-            this.registerExtensions(['csv'], CSV_VIEW_TYPE);
-        }
+        // Built-in extensions are claimed first, so a stale custom list cannot hijack a new format.
+        const claimed = new Set<string>();
+        const claim = (extensions: string[], viewType: string) => {
+            const fresh = extensions.filter((ext) => !claimed.has(ext));
+            fresh.forEach((ext) => claimed.add(ext));
+            if (fresh.length > 0) {
+                this.registerExtensions(fresh, viewType);
+            }
+        };
 
-        if (this.settings.enableLogViewer) {
-            this.registerExtensions(['log'], LOG_VIEW_TYPE);
-        }
-
-        if (this.settings.enableVttViewer) {
-            this.registerExtensions(['vtt'], TRANSCRIPT_VIEW_TYPE);
-        }
-
-        if (this.settings.enableSrtViewer) {
-            this.registerExtensions(['srt'], TRANSCRIPT_VIEW_TYPE);
-        }
-
-        if (this.settings.enableJsonViewer) {
-            this.registerExtensions(['json'], JSON_VIEW_TYPE);
-        }
+        VIEWERS.filter((viewer) => this.settings[viewer.enable]).forEach((viewer) => claim(viewer.extensions, viewer.viewType));
+        VIEWERS.filter((viewer) => this.settings[viewer.enable]).forEach((viewer) => claim(parseExtensionList(this.settings.extraExtensions?.[viewer.key]), viewer.viewType));
 
         this.addSettingTab(new CSVViewerSettingTab(this.app, this));
     }
@@ -921,12 +1146,25 @@ export default class CSVViewerPlugin extends Plugin {
         }
 
         const candidate = settings as Partial<Record<keyof CSVViewerSettings, unknown>>;
+        const savedExtensions = candidate.extraExtensions;
+        const extraExtensions: Record<string, string> = {};
+
+        if (savedExtensions && typeof savedExtensions === 'object') {
+            for (const [key, value] of Object.entries(savedExtensions as Record<string, unknown>)) {
+                if (typeof value === 'string') {
+                    extraExtensions[key] = value;
+                }
+            }
+        }
+
         return {
+            extraExtensions,
             ...(typeof candidate.enableCsvViewer === 'boolean' ? { enableCsvViewer: candidate.enableCsvViewer } : {}),
             ...(typeof candidate.enableLogViewer === 'boolean' ? { enableLogViewer: candidate.enableLogViewer } : {}),
             ...(typeof candidate.enableVttViewer === 'boolean' ? { enableVttViewer: candidate.enableVttViewer } : {}),
             ...(typeof candidate.enableSrtViewer === 'boolean' ? { enableSrtViewer: candidate.enableSrtViewer } : {}),
-            ...(typeof candidate.enableJsonViewer === 'boolean' ? { enableJsonViewer: candidate.enableJsonViewer } : {})
+            ...(typeof candidate.enableJsonViewer === 'boolean' ? { enableJsonViewer: candidate.enableJsonViewer } : {}),
+            ...(typeof candidate.enableJsonlViewer === 'boolean' ? { enableJsonlViewer: candidate.enableJsonlViewer } : {})
         };
     }
 }
@@ -943,60 +1181,29 @@ class CSVViewerSettingTab extends PluginSettingTab {
         const { containerEl } = this;
         containerEl.empty();
 
-        new Setting(containerEl)
-            .setName('CSV viewer')
-            .setDesc('Open .csv files in the interactive table viewer.')
-            .addToggle((toggle) => toggle
-                .setValue(this.plugin.settings.enableCsvViewer)
-                .onChange(async (value) => {
-                    this.plugin.settings.enableCsvViewer = value;
-                    await this.plugin.saveSettings();
-                    new Notice('Reload this plugin for file type changes to take effect.');
-                }));
-
-        new Setting(containerEl)
-            .setName('Log viewer')
-            .setDesc('Open .log files in the filtered log viewer.')
-            .addToggle((toggle) => toggle
-                .setValue(this.plugin.settings.enableLogViewer)
-                .onChange(async (value) => {
-                    this.plugin.settings.enableLogViewer = value;
-                    await this.plugin.saveSettings();
-                    new Notice('Reload this plugin for file type changes to take effect.');
-                }));
-
-        new Setting(containerEl)
-            .setName('.vtt transcript viewer')
-            .setDesc('Open .vtt files in the transcript viewer.')
-            .addToggle((toggle) => toggle
-                .setValue(this.plugin.settings.enableVttViewer)
-                .onChange(async (value) => {
-                    this.plugin.settings.enableVttViewer = value;
-                    await this.plugin.saveSettings();
-                    new Notice('Reload this plugin for file type changes to take effect.');
-                }));
-
-        new Setting(containerEl)
-            .setName('.srt transcript viewer')
-            .setDesc('Open .srt files in the transcript viewer.')
-            .addToggle((toggle) => toggle
-                .setValue(this.plugin.settings.enableSrtViewer)
-                .onChange(async (value) => {
-                    this.plugin.settings.enableSrtViewer = value;
-                    await this.plugin.saveSettings();
-                    new Notice('Reload this plugin for file type changes to take effect.');
-                }));
-
-        new Setting(containerEl)
-            .setName('JSON viewer')
-            .setDesc('Open .json files in an editable JSON viewer with validation and formatting controls.')
-            .addToggle((toggle) => toggle
-                .setValue(this.plugin.settings.enableJsonViewer)
-                .onChange(async (value) => {
-                    this.plugin.settings.enableJsonViewer = value;
-                    await this.plugin.saveSettings();
-                    new Notice('Reload this plugin for file type changes to take effect.');
-                }));
+        for (const viewer of VIEWERS) {
+            new Setting(containerEl)
+                .setName(viewer.name)
+                .setDesc(viewer.desc)
+                .addToggle((toggle) => toggle
+                    .setValue(this.plugin.settings[viewer.enable])
+                    .onChange(async (value) => {
+                        this.plugin.settings[viewer.enable] = value;
+                        await this.plugin.saveSettings();
+                        new Notice('Reload this plugin for file type changes to take effect.');
+                    }))
+                .addText((text) => text
+                    .setPlaceholder('Additional extensions (comma-separated)')
+                    .setValue(this.plugin.settings.extraExtensions?.[viewer.key] ?? '')
+                    .onChange(async (value) => {
+                        this.plugin.settings.extraExtensions = {
+                            ...this.plugin.settings.extraExtensions,
+                            [viewer.key]: value
+                        };
+                        await this.plugin.saveSettings();
+                        new Notice('Reload this plugin for file type changes to take effect.');
+                    }));
+        }
 
         new Setting(containerEl)
             .setName('Feedback')

@@ -1,8 +1,8 @@
-# File Viewer (view CSV, JSON, VTT, Log, SRT, and more)
+# File Viewer (view CSV, JSONL, JSON, VTT, Log, SRT, and more)
 
 File Viewer lets you open common data, transcript, and text-based files directly in Obsidian with purpose-built views instead of raw plain text.
 
-Use it to view and edit `.csv` files as formatted tables, edit `.json` files with validation and spacing controls, inspect `.log` files with filters and highlighting, and read `.vtt` or `.srt` transcript files as searchable timestamped cues.
+Use it to view and edit `.csv` files as formatted tables, edit `.json` files with validation and spacing controls, read `.jsonl` files as pretty-printed records filtered by a jq expression, inspect `.log` files with filters and highlighting, and read `.vtt` or `.srt` transcript files as searchable timestamped cues.
 
 ## Features
 
@@ -10,8 +10,9 @@ Use it to view and edit `.csv` files as formatted tables, edit `.json` files wit
 - **Interactive Tables** — Click column headers to sort ascending/descending with smart numeric detection
 - **Inline Editing** — Toggle edit mode to modify cells directly in the table. Changes auto-save on blur. Tab/Shift+Tab to navigate between cells, Escape to deselect.
 - **CSV Search & Filter** — Real-time search across all columns with match highlighting
+- **JSONL Viewer** — Open `.jsonl` files as pretty-printed records with source line numbers and a jq filter bar (runs real jq 1.8 compiled to WebAssembly)
 - **JSON Editing** — Edit `.json` files in a monospace editor with live validation, friendly error locations, pretty formatting, and minifying
-- **Log Viewer** — Open `.log` files with line numbers, log level coloring, timestamp highlighting, level filters, search, and auto-scroll
+- **Log Viewer** — Open `.log` and `.txt` files with line numbers, log level coloring, timestamp highlighting, level filters, search, and auto-scroll
 - **Transcript Viewer** — Open `.vtt` and `.srt` files as readable cue lists with timestamps, multiline captions, and search highlighting
 - **Theme Support** — Uses Obsidian's CSS variables so tables match your light or dark theme
 - **Responsive Layout** — Sticky headers, horizontal scrolling, and text-overflow handling for wide data
@@ -46,7 +47,7 @@ Once enabled, open any `.csv` file in your vault and it will render as a table a
 - **Search** — Type in the search box to filter rows. Matching cells are highlighted.
 - **Edit** — Click the Edit button in the toolbar to toggle edit mode. Click any cell to modify its contents. Changes save automatically when you click away. Sorting is disabled while editing.
 
-Open any `.log` file in your vault to inspect it in the log viewer.
+Open any `.log` or `.txt` file in your vault to inspect it in the log viewer.
 
 - **Search** — Type in the filter box to show matching log lines.
 - **Level filters** — Toggle Errors, Warnings, Info, and Debug to narrow the view.
@@ -58,6 +59,12 @@ Open any `.vtt` or `.srt` file in your vault to read it in the transcript viewer
 - **Cue timing** — Each cue shows its number and start/end timestamp.
 - **Multiline captions** — Wrapped captions preserve line breaks from the transcript file.
 
+Open any `.jsonl` or `.ndjson` file in your vault to read it in the JSONL viewer.
+
+- **jq filter** — Type any jq expression in the top bar. Each line is fed to jq separately, so `.level` or `select(.status == "error") | .msg` behaves exactly like `jq -c` on the file.
+- **Pretty output** — Every jq result is pretty-printed with the line number it came from. Filtered-out lines disappear.
+- **Errors** — Invalid JSON lines are flagged individually; jq errors show in the toolbar.
+
 Open any `.json` file in your vault to edit it in the JSON viewer.
 
 - **Validate** — Check whether the current JSON is valid and see friendly line/column errors.
@@ -66,7 +73,9 @@ Open any `.json` file in your vault to edit it in the JSON viewer.
 
 ## Options
 
-In the plugin options, you can enable or disable CSV, JSON, log, VTT transcript, and SRT transcript viewing separately. Reload the plugin after changing any file type option.
+In the plugin options, you can enable or disable CSV, JSON, JSONL, log, VTT transcript, and SRT transcript viewing separately.
+Each viewer also has an **Additional extensions** field: type your own extensions (comma-separated, e.g. `jsonl, ndjson`)
+and files with those extensions open in that viewer. Reload the plugin after changing any file type option.
 
 ## Privacy
 
