@@ -1,5 +1,6 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, TextFileView } from 'obsidian';
 import { parseCSV, parseTranscript, serializeCSV, TranscriptCue, TranscriptFormat } from './csv-parser';
+import { formatRowInfo, pickAnchorRow, resolveAnchorRow, rowMatchesQuery, RowBox, scrollTopForRow } from './csv-position';
 import { formatJson, minifyJson, validateJson } from './json-utils';
 import { SUPPORT_ISSUES_URL } from './support';
 
@@ -32,12 +33,21 @@ interface LogLine {
     level: LogLevel;
 }
 
+interface CSVScrollState {
+    /** originalRowIndex of the data row at the top of the visible area, if any. */
+    anchorRow: number | null;
+    scrollLeft: number;
+    /** Scroll of the outer `.csv-view-content`, which also scrolls in short panes. */
+    outerScrollTop: number;
+}
+
 class CSVView extends TextFileView {
     data: string = '';
     parsedRows: string[][] = [];
     sortColumn: number = -1;
     sortAscending: boolean = true;
     editMode: boolean = false;
+    searchQuery: string = '';
 
     getViewType(): string {
         return CSV_VIEW_TYPE;
@@ -70,13 +80,75 @@ class CSVView extends TextFileView {
         this.parsedRows = parseCSV(data);
         this.sortColumn = -1;
         this.sortAscending = true;
+        this.searchQuery = '';
         this.renderCSV();
     }
 
     clear(): void {
         this.data = '';
         this.parsedRows = [];
+        this.searchQuery = '';
         this.contentEl.empty();
+    }
+
+    /** First pixel row of the table scroll area that is not covered by the sticky header. */
+    private getContentTop(scroll: HTMLElement): number {
+        const header = scroll.querySelector('th');
+        const headerHeight = header ? header.getBoundingClientRect().height : 0;
+        return scroll.getBoundingClientRect().top + scroll.clientTop + headerHeight;
+    }
+
+    /**
+     * Remember which data row is at the top of the visible area and the horizontal
+     * scroll, before the table is rebuilt. The row is the anchor (not pixels)
+     * because row heights change between view and edit mode.
+     */
+    captureScrollState(): CSVScrollState | null {
+        const scroll = this.contentEl.querySelector<HTMLElement>('.csv-table-scroll');
+        if (!scroll) return null;
+        const outer = this.contentEl.querySelector<HTMLElement>('.csv-view-content');
+
+        const contentTop = this.getContentTop(scroll);
+        const trs = Array.from(scroll.querySelectorAll<HTMLElement>('tbody tr'));
+        function* boxes(): Generator<RowBox> {
+            for (const tr of trs) {
+                const hidden = tr.hasClass('csv-row-hidden');
+                const rect = hidden ? null : tr.getBoundingClientRect();
+                yield {
+                    originalIndex: Number(tr.getAttribute('data-row-index')),
+                    top: rect ? rect.top : 0,
+                    bottom: rect ? rect.bottom : 0,
+                    hidden
+                };
+            }
+        }
+
+        return {
+            anchorRow: pickAnchorRow(boxes(), contentTop),
+            scrollLeft: scroll.scrollLeft,
+            outerScrollTop: outer ? outer.scrollTop : 0
+        };
+    }
+
+    /** Scroll the rebuilt table so the anchor row is right below the sticky header. */
+    private restoreScrollState(outer: HTMLElement, scroll: HTMLElement, state: CSVScrollState) {
+        // The outer container first, so the row is measured where it will stay.
+        outer.scrollTop = state.outerScrollTop;
+        scroll.scrollLeft = state.scrollLeft;
+        if (state.anchorRow === null) return;
+
+        const trs = Array.from(scroll.querySelectorAll<HTMLElement>('tbody tr'));
+        const index = resolveAnchorRow(
+            trs.map(tr => ({
+                originalIndex: Number(tr.getAttribute('data-row-index')),
+                hidden: tr.hasClass('csv-row-hidden')
+            })),
+            state.anchorRow
+        );
+        if (index === null) return;
+
+        const rowTop = trs[index].getBoundingClientRect().top;
+        scroll.scrollTop = scrollTopForRow(scroll.scrollTop, rowTop, this.getContentTop(scroll));
     }
 
     getSortedRows(): { rows: string[][], originalIndices: number[] } {
@@ -121,7 +193,7 @@ class CSVView extends TextFileView {
         };
     }
 
-    renderCSV() {
+    renderCSV(restore: CSVScrollState | null = null) {
         this.contentEl.empty();
 
         const container = this.contentEl.createDiv({ cls: 'csv-view-content' });
@@ -140,20 +212,22 @@ class CSVView extends TextFileView {
             cls: 'csv-view-search',
             attr: { type: 'text', placeholder: '🔍 Search...' }
         });
+        searchInput.value = this.searchQuery;
 
         const editBtn = toolbar.createEl('button', {
             text: 'Edit',
             cls: 'csv-edit-btn' + (this.editMode ? ' active' : '')
         });
         editBtn.addEventListener('click', () => {
+            const scrollState = this.captureScrollState();
             this.editMode = !this.editMode;
-            this.renderCSV();
+            this.renderCSV(scrollState);
         });
 
         const info = toolbar.createDiv({ cls: 'csv-view-info' });
         const dataRowCount = rows.length - 1;
         const colCount = rows[0]?.length || 0;
-        info.textContent = `${dataRowCount.toLocaleString()} rows · ${colCount} columns`;
+        info.textContent = formatRowInfo('', dataRowCount, dataRowCount, colCount);
 
         // Table
         const tableWrapper = container.createDiv({ cls: 'csv-table-wrapper' });
@@ -201,8 +275,8 @@ class CSVView extends TextFileView {
         // Body
         const tbody = table.createEl('tbody');
         for (let i = 1; i < rows.length; i++) {
-            const tr = tbody.createEl('tr');
             const originalRowIndex = originalIndices[i];
+            const tr = tbody.createEl('tr', { attr: { 'data-row-index': String(originalRowIndex) } });
 
             for (let j = 0; j < headers.length; j++) {
                 const cellValue = rows[i][j] || '';
@@ -254,31 +328,25 @@ class CSVView extends TextFileView {
             }
         }
 
-        // Search
-        searchInput.addEventListener('input', () => {
-            const query = searchInput.value.toLowerCase();
-            const bodyRows = tbody.querySelectorAll('tr');
+        // Search: the query lives on the view, so it survives rebuilds (Edit toggle, sorting).
+        const applySearch = () => {
+            const query = this.searchQuery.toLowerCase();
             let visibleCount = 0;
 
-            bodyRows.forEach((row) => {
-                const cells = row.querySelectorAll('td');
-                let matches = false;
+            tbody.querySelectorAll('tr').forEach((row) => {
+                const cells = Array.from(row.querySelectorAll('td'));
+                const matches = rowMatchesQuery(cells.map(cell => cell.textContent || ''), query);
 
                 cells.forEach((cell) => {
-                    const text = cell.textContent?.toLowerCase() || '';
-                    if (text.includes(query)) {
-                        matches = true;
-                        if (query) {
-                            cell.addClass('csv-highlight');
-                        } else {
-                            cell.removeClass('csv-highlight');
-                        }
+                    const cellMatches = query !== '' && (cell.textContent || '').toLowerCase().includes(query);
+                    if (cellMatches) {
+                        cell.addClass('csv-highlight');
                     } else {
                         cell.removeClass('csv-highlight');
                     }
                 });
 
-                if (matches || !query) {
+                if (matches) {
                     row.removeClass('csv-row-hidden');
                     visibleCount++;
                 } else {
@@ -286,12 +354,21 @@ class CSVView extends TextFileView {
                 }
             });
 
-            if (query) {
-                info.textContent = `${visibleCount.toLocaleString()} of ${dataRowCount.toLocaleString()} rows`;
-            } else {
-                info.textContent = `${dataRowCount.toLocaleString()} rows · ${colCount} columns`;
-            }
+            info.textContent = formatRowInfo(query, visibleCount, dataRowCount, colCount);
+        };
+
+        searchInput.addEventListener('input', () => {
+            this.searchQuery = searchInput.value;
+            applySearch();
         });
+
+        if (this.searchQuery) {
+            applySearch();
+        }
+
+        if (restore) {
+            this.restoreScrollState(container, tableScroll, restore);
+        }
     }
 }
 

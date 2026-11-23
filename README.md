@@ -43,8 +43,8 @@ obsidian plugin:install id=csv-viewer enable
 Once enabled, open any `.csv` file in your vault and it will render as a table automatically.
 
 - **Sort** — Click any column header. Click again to reverse the sort direction.
-- **Search** — Type in the search box to filter rows. Matching cells are highlighted.
-- **Edit** — Click the Edit button in the toolbar to toggle edit mode. Click any cell to modify its contents. Changes save automatically when you click away. Sorting is disabled while editing.
+- **Search** — Type in the search box to filter rows. Matching cells are highlighted. The search text is kept when you toggle Edit or sort a column.
+- **Edit** — Click the Edit button in the toolbar to toggle edit mode. Click any cell to modify its contents. Changes save automatically when you click away. Sorting is disabled while editing. Toggling Edit keeps your place: the row at the top of the table stays at the top, and the horizontal scroll is preserved.
 
 Open any `.log` file in your vault to inspect it in the log viewer.
 

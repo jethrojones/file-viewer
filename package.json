@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "lint:obsidian": "eslint main.ts support.ts json-utils.ts csv-parser.ts csv-parser.test.ts main.test.ts json-utils.test.ts",
+    "lint:obsidian": "eslint main.ts support.ts json-utils.ts csv-parser.ts csv-parser.test.ts csv-position.ts csv-position.test.ts main.test.ts json-utils.test.ts",
     "verify": "npm run lint:obsidian && npm run build && npm test",
     "hooks:install": "git config core.hooksPath .githooks",
     "test": "vitest run",
