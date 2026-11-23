@@ -1,5 +1,5 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, TextFileView } from 'obsidian';
-import { parseCSV, parseTranscript, serializeCSV, TranscriptCue, TranscriptFormat } from './csv-parser';
+import { applyCellEdit, getCellValue, parseCSV, parseTranscript, serializeCSV, sortCSVRows, TranscriptCue, TranscriptFormat } from './csv-parser';
 import { formatJson, minifyJson, validateJson } from './json-utils';
 import { SUPPORT_ISSUES_URL } from './support';
 
@@ -30,6 +30,24 @@ interface LogLine {
     number: number;
     text: string;
     level: LogLevel;
+}
+
+/**
+ * Paste handler for editable cells: inserts the clipboard as plain text,
+ * dropping any rich formatting.
+ */
+function pastePlainText(e: ClipboardEvent, td: HTMLElement): void {
+    e.preventDefault();
+    const text = e.clipboardData?.getData('text/plain') || '';
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(td.ownerDocument.createTextNode(text));
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
 }
 
 class CSVView extends TextFileView {
@@ -80,44 +98,72 @@ class CSVView extends TextFileView {
     }
 
     getSortedRows(): { rows: string[][], originalIndices: number[] } {
-        if (this.parsedRows.length < 2) {
-            return {
-                rows: this.parsedRows,
-                originalIndices: this.parsedRows.map((_, i) => i)
-            };
-        }
+        return sortCSVRows(this.parsedRows, this.sortColumn, this.sortAscending);
+    }
 
-        const headers = this.parsedRows[0];
-        const dataRows = this.parsedRows.slice(1);
-        const originalIndices = dataRows.map((_, i) => i + 1); // 1-based (skip header)
+    /**
+     * Wire up editing for one body cell. Used by both Edit mode (every cell is
+     * editable) and double-click editing (one cell at a time, no re-render).
+     * Enter and blur save, Escape restores the stored value and saves nothing.
+     * The stored value is always read from parsedRows, never captured at render
+     * time, so a second edit of the same cell compares against what was saved.
+     */
+    bindCellEditor(td: HTMLElement, rowIndex: number, colIndex: number, tbody: HTMLElement): { start: () => void } {
+        const storedValue = () => getCellValue(this.parsedRows, rowIndex, colIndex);
 
-        if (this.sortColumn < 0) {
-            return {
-                rows: [headers, ...dataRows],
-                originalIndices: [0, ...originalIndices]
-            };
-        }
+        td.addEventListener('paste', (e: ClipboardEvent) => pastePlainText(e, td));
 
-        const indexedRows = dataRows.map((row, i) => ({ row, originalIndex: i + 1 }));
-
-        indexedRows.sort((a, b) => {
-            const aVal = a.row[this.sortColumn] || '';
-            const bVal = b.row[this.sortColumn] || '';
-
-            const aNum = parseFloat(aVal.replace(/[,$%]/g, ''));
-            const bNum = parseFloat(bVal.replace(/[,$%]/g, ''));
-
-            if (!isNaN(aNum) && !isNaN(bNum)) {
-                return this.sortAscending ? aNum - bNum : bNum - aNum;
+        td.addEventListener('blur', () => {
+            const newValue = td.textContent || '';
+            if (applyCellEdit(this.parsedRows, rowIndex, colIndex, newValue)) {
+                this.data = serializeCSV(this.parsedRows);
+                this.requestSave();
             }
 
-            const comparison = aVal.localeCompare(bVal, undefined, { numeric: true, sensitivity: 'base' });
-            return this.sortAscending ? comparison : -comparison;
+            if (!this.editMode) {
+                td.removeAttribute('contenteditable');
+                td.setAttribute('title', storedValue());
+            }
+        });
+
+        td.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (e.isComposing) return;
+
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                td.blur();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                td.textContent = storedValue();
+                td.blur();
+            } else if (e.key === 'Tab' && this.editMode) {
+                e.preventDefault();
+                const allCells = Array.from(tbody.querySelectorAll('td[contenteditable]'));
+                const currentIndex = allCells.indexOf(td);
+                const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
+                if (nextIndex >= 0 && nextIndex < allCells.length) {
+                    (allCells[nextIndex] as HTMLElement).focus();
+                }
+            }
         });
 
         return {
-            rows: [headers, ...indexedRows.map(r => r.row)],
-            originalIndices: [0, ...indexedRows.map(r => r.originalIndex)]
+            start: () => {
+                if (td.getAttribute('contenteditable') === 'true') return;
+
+                td.setAttribute('contenteditable', 'true');
+                td.removeAttribute('title');
+                td.focus();
+
+                const selection = window.getSelection();
+                if (selection) {
+                    const range = td.ownerDocument.createRange();
+                    range.selectNodeContents(td);
+                    range.collapse(false);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                }
+            }
         };
     }
 
@@ -209,49 +255,33 @@ class CSVView extends TextFileView {
                 const td = tr.createEl('td', { text: cellValue, attr: { title: cellValue } });
 
                 if (this.editMode) {
-                    // Use contenteditable="true" for broad Obsidian/Electron compatibility;
-                    // intercept paste to strip rich text.
+                    // Use contenteditable="true" for broad Obsidian/Electron compatibility.
+                    this.bindCellEditor(td, originalRowIndex, j, tbody);
                     td.setAttribute('contenteditable', 'true');
                     td.removeAttribute('title');
-
-                    td.addEventListener('paste', (e: ClipboardEvent) => {
-                        e.preventDefault();
-                        const text = e.clipboardData?.getData('text/plain') || '';
-                        const selection = window.getSelection();
-                        if (!selection || selection.rangeCount === 0) return;
-
-                        const range = selection.getRangeAt(0);
-                        range.deleteContents();
-                        range.insertNode(td.ownerDocument.createTextNode(text));
-                        range.collapse(false);
-                        selection.removeAllRanges();
-                        selection.addRange(range);
-                    });
-
-                    td.addEventListener('blur', () => {
-                        const newValue = td.textContent || '';
-                        if (newValue !== cellValue) {
-                            this.parsedRows[originalRowIndex][j] = newValue;
-                            this.data = serializeCSV(this.parsedRows);
-                            this.requestSave();
-                        }
-                    });
-
-                    td.addEventListener('keydown', (e: KeyboardEvent) => {
-                        if (e.key === 'Tab') {
-                            e.preventDefault();
-                            const allCells = Array.from(tbody.querySelectorAll('td[contenteditable]'));
-                            const currentIndex = allCells.indexOf(td);
-                            const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
-                            if (nextIndex >= 0 && nextIndex < allCells.length) {
-                                (allCells[nextIndex] as HTMLElement).focus();
-                            }
-                        } else if (e.key === 'Escape') {
-                            td.blur();
-                        }
-                    });
+                } else {
+                    // Read mode: no per-cell listeners. A single delegated dblclick
+                    // handler on the tbody finds the cell by these attributes.
+                    td.dataset.row = String(originalRowIndex);
+                    td.dataset.col = String(j);
                 }
             }
+        }
+
+        if (!this.editMode) {
+            // Editors are bound lazily, once per cell, the first time it is double-clicked.
+            const editors = new WeakMap<HTMLElement, { start: () => void }>();
+            tbody.addEventListener('dblclick', (e: MouseEvent) => {
+                const td = (e.target as HTMLElement).closest<HTMLElement>('td');
+                if (!td || !tbody.contains(td) || td.dataset.row === undefined || td.dataset.col === undefined) return;
+
+                let editor = editors.get(td);
+                if (!editor) {
+                    editor = this.bindCellEditor(td, Number(td.dataset.row), Number(td.dataset.col), tbody);
+                    editors.set(td, editor);
+                }
+                editor.start();
+            });
         }
 
         // Search

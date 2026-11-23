@@ -8,7 +8,7 @@ Use it to view and edit `.csv` files as formatted tables, edit `.json` files wit
 
 - **CSV Parsing** — RFC-compliant parser handling quoted fields, escaped quotes, and mixed line endings
 - **Interactive Tables** — Click column headers to sort ascending/descending with smart numeric detection
-- **Inline Editing** — Toggle edit mode to modify cells directly in the table. Changes auto-save on blur. Tab/Shift+Tab to navigate between cells, Escape to deselect.
+- **Inline Editing** — Double-click any cell to edit just that cell, or toggle edit mode to make every cell editable. Enter or clicking away saves, Escape cancels and restores the original value. In edit mode, Tab/Shift+Tab navigates between cells. Pasted text is inserted without formatting.
 - **CSV Search & Filter** — Real-time search across all columns with match highlighting
 - **JSON Editing** — Edit `.json` files in a monospace editor with live validation, friendly error locations, pretty formatting, and minifying
 - **Log Viewer** — Open `.log` files with line numbers, log level coloring, timestamp highlighting, level filters, search, and auto-scroll
@@ -44,7 +44,8 @@ Once enabled, open any `.csv` file in your vault and it will render as a table a
 
 - **Sort** — Click any column header. Click again to reverse the sort direction.
 - **Search** — Type in the search box to filter rows. Matching cells are highlighted.
-- **Edit** — Click the Edit button in the toolbar to toggle edit mode. Click any cell to modify its contents. Changes save automatically when you click away. Sorting is disabled while editing.
+- **Edit a cell** — Double-click a cell to edit it in place. Press Enter or click away to save, or press Escape to cancel and restore the original value. Column headers are not editable; clicking one sorts. Works with an active sort or search, and the change is saved to the right row of the file.
+- **Edit mode** — Click the Edit button in the toolbar to make every cell editable. Click any cell to modify its contents. Press Enter or click away to save, or Escape to cancel the change to that cell. Sorting is disabled while editing.
 
 Open any `.log` file in your vault to inspect it in the log viewer.
 

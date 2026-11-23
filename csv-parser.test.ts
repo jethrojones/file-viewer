@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCSV, parseTranscript, serializeCSV } from './csv-parser';
+import { applyCellEdit, getCellValue, parseCSV, parseTranscript, serializeCSV, sortCSVRows } from './csv-parser';
 
 describe('parseCSV', () => {
     it('parses simple CSV with headers', () => {
@@ -192,5 +192,102 @@ describe('parseTranscript', () => {
                 text: 'Second cue'
             }
         ]);
+    });
+});
+
+describe('getCellValue', () => {
+    it('returns the stored value', () => {
+        expect(getCellValue([['A', 'B'], ['1', '2']], 1, 1)).toBe('2');
+    });
+
+    it('treats missing rows and cells as empty', () => {
+        const rows = [['A', 'B'], ['1']];
+        expect(getCellValue(rows, 1, 1)).toBe('');
+        expect(getCellValue(rows, 5, 0)).toBe('');
+    });
+});
+
+describe('applyCellEdit', () => {
+    it('writes a changed value in place and reports the change', () => {
+        const rows = [['A', 'B'], ['1', '2']];
+        expect(applyCellEdit(rows, 1, 1, '3')).toBe(true);
+        expect(rows[1][1]).toBe('3');
+    });
+
+    it('reports no change when the value is the same', () => {
+        const rows = [['A', 'B'], ['1', '2']];
+        expect(applyCellEdit(rows, 1, 0, '1')).toBe(false);
+        expect(rows).toEqual([['A', 'B'], ['1', '2']]);
+    });
+
+    it('compares against the current value on a second edit of the same cell', () => {
+        const rows = [['A'], ['old']];
+        expect(applyCellEdit(rows, 1, 0, 'new')).toBe(true);
+        // Reverting to the original value is a real change after the first save.
+        expect(applyCellEdit(rows, 1, 0, 'old')).toBe(true);
+        expect(applyCellEdit(rows, 1, 0, 'old')).toBe(false);
+    });
+
+    it('ignores a row that does not exist', () => {
+        const rows = [['A']];
+        expect(applyCellEdit(rows, 3, 0, 'x')).toBe(false);
+        expect(rows).toEqual([['A']]);
+    });
+
+    it('pads short rows so the result still serializes', () => {
+        const rows = [['A', 'B', 'C'], ['1']];
+        expect(applyCellEdit(rows, 1, 2, 'z')).toBe(true);
+        expect(rows[1]).toEqual(['1', '', 'z']);
+        expect(serializeCSV(rows)).toBe('A,B,C\n1,,z');
+    });
+
+    it('treats an empty edit of a missing cell as unchanged', () => {
+        const rows = [['A', 'B'], ['1']];
+        expect(applyCellEdit(rows, 1, 1, '')).toBe(false);
+        expect(rows[1]).toEqual(['1']);
+    });
+
+    it('survives a serialize and parse round trip with special characters', () => {
+        const rows = [['A', 'B'], ['1', '2']];
+        applyCellEdit(rows, 1, 0, 'a, "quoted" value');
+        expect(parseCSV(serializeCSV(rows))).toEqual([['A', 'B'], ['a, "quoted" value', '2']]);
+    });
+});
+
+describe('cell edits on a sorted table', () => {
+    const csv = 'name,score\nalice,30\nbob,10\ncarol,20';
+
+    it('writes to the file row the edited cell came from, not its position on screen', () => {
+        const parsed = parseCSV(csv);
+        const { rows, originalIndices } = sortCSVRows(parsed, 1, true);
+        // On screen: header, bob (10), carol (20), alice (30).
+        expect(rows.map(r => r[0])).toEqual(['name', 'bob', 'carol', 'alice']);
+
+        // Edit the first data row on screen (bob), which is file row 2.
+        expect(applyCellEdit(parsed, originalIndices[1], 0, 'robert')).toBe(true);
+
+        expect(serializeCSV(parsed)).toBe('name,score\nalice,30\nrobert,10\ncarol,20');
+    });
+
+    it('also targets the right row when sorted descending', () => {
+        const parsed = parseCSV(csv);
+        const { rows, originalIndices } = sortCSVRows(parsed, 1, false);
+        expect(rows.map(r => r[0])).toEqual(['name', 'alice', 'carol', 'bob']);
+
+        // Edit the last data row on screen (bob), which is file row 2.
+        applyCellEdit(parsed, originalIndices[3], 1, '11');
+
+        expect(serializeCSV(parsed)).toBe('name,score\nalice,30\nbob,11\ncarol,20');
+    });
+
+    it('keeps the file order and a header-first index map when unsorted', () => {
+        const { rows, originalIndices } = sortCSVRows(parseCSV(csv), -1, true);
+        expect(rows.map(r => r[0])).toEqual(['name', 'alice', 'bob', 'carol']);
+        expect(originalIndices).toEqual([0, 1, 2, 3]);
+    });
+
+    it('handles files with only a header or nothing', () => {
+        expect(sortCSVRows([], 0, true)).toEqual({ rows: [], originalIndices: [] });
+        expect(sortCSVRows([['A']], 0, true)).toEqual({ rows: [['A']], originalIndices: [0] });
     });
 });
