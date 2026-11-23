@@ -165,6 +165,23 @@ class CSVView extends TextFileView {
         const headerRow = thead.createEl('tr');
         const headers = rows[0] || [];
 
+        // Row-number column: not part of the data, so it never reaches the file.
+        const rowNumberTh = headerRow.createEl('th', {
+            text: '#',
+            cls: 'csv-row-number csv-row-number-header',
+            attr: { scope: 'col', title: 'Row number (click to restore file order)' }
+        });
+        if (this.editMode) {
+            rowNumberTh.addClass('sort-disabled');
+        } else {
+            rowNumberTh.addEventListener('click', () => {
+                if (this.sortColumn === -1) return;
+                this.sortColumn = -1;
+                this.sortAscending = true;
+                this.renderCSV();
+            });
+        }
+
         headers.forEach((header, index) => {
             const th = headerRow.createEl('th');
             const thContent = th.createDiv({ cls: 'th-content' });
@@ -203,6 +220,14 @@ class CSVView extends TextFileView {
         for (let i = 1; i < rows.length; i++) {
             const tr = tbody.createEl('tr');
             const originalRowIndex = originalIndices[i];
+
+            // Record number in the file (first data row = 1); unchanged by sorting or search.
+            // A <th>, not a <td>, so search, highlight and Tab navigation skip it.
+            tr.createEl('th', {
+                text: String(originalRowIndex),
+                cls: 'csv-row-number',
+                attr: { scope: 'row' }
+            });
 
             for (let j = 0; j < headers.length; j++) {
                 const cellValue = rows[i][j] || '';

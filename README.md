@@ -8,6 +8,7 @@ Use it to view and edit `.csv` files as formatted tables, edit `.json` files wit
 
 - **CSV Parsing** — RFC-compliant parser handling quoted fields, escaped quotes, and mixed line endings
 - **Interactive Tables** — Click column headers to sort ascending/descending with smart numeric detection
+- **Row Numbers** — A fixed `#` column on the left shows each row's record number in the file. It stays visible while scrolling sideways and keeps its numbers when you sort or search.
 - **Inline Editing** — Toggle edit mode to modify cells directly in the table. Changes auto-save on blur. Tab/Shift+Tab to navigate between cells, Escape to deselect.
 - **CSV Search & Filter** — Real-time search across all columns with match highlighting
 - **JSON Editing** — Edit `.json` files in a monospace editor with live validation, friendly error locations, pretty formatting, and minifying
@@ -44,6 +45,7 @@ Once enabled, open any `.csv` file in your vault and it will render as a table a
 
 - **Sort** — Click any column header. Click again to reverse the sort direction.
 - **Search** — Type in the search box to filter rows. Matching cells are highlighted.
+- **Row numbers** — The `#` column shows each row's record number in the file (the first data row is 1). Numbers do not change when you sort or search, so a row keeps the same number. The column stays fixed when you scroll sideways, is not editable, and is not saved to the file. Click the `#` header to clear the sort and return to file order.
 - **Edit** — Click the Edit button in the toolbar to toggle edit mode. Click any cell to modify its contents. Changes save automatically when you click away. Sorting is disabled while editing.
 
 Open any `.log` file in your vault to inspect it in the log viewer.

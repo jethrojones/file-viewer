@@ -193,6 +193,55 @@
     background: var(--background-secondary);
 }
 
+/* Row-number column: fixed on the left. These rules override the generic
+   `.csv-table th` column-header styles so they do not leak into row cells. */
+.csv-table th.csv-row-number {
+    left: 0;
+    width: 1%;
+    min-width: 3em;
+    padding-left: 10px;
+    padding-right: 10px;
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    border-right: none;
+    box-shadow: inset -1px 0 0 var(--background-modifier-border);
+}
+
+/* Body cells: sticky on the left only, never at the top. */
+.csv-table tbody th.csv-row-number {
+    top: auto;
+    z-index: 5;
+    background: var(--background-secondary);
+    font-weight: normal;
+    cursor: default;
+    user-select: none;
+    border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+
+.csv-table tbody th.csv-row-number:hover {
+    background: var(--background-secondary);
+}
+
+.csv-table tbody tr:last-child th.csv-row-number {
+    border-bottom: none;
+}
+
+/* Corner cell: above both the sticky header row (z-index 10) and the sticky number cells. */
+.csv-table thead th.csv-row-number-header {
+    z-index: 20;
+}
+
+.csv-table thead th.csv-row-number-header:hover {
+    background: var(--background-secondary);
+    color: var(--text-normal);
+}
+
+.csv-table thead th.csv-row-number-header.sort-disabled:hover {
+    color: var(--text-muted);
+}
+
 .log-view-content {
     padding: 16px;
     overflow: auto;
