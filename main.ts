@@ -1,5 +1,5 @@
 import { App, Notice, Plugin, PluginSettingTab, Setting, TextFileView } from 'obsidian';
-import { parseCSV, parseTranscript, serializeCSV, TranscriptCue, TranscriptFormat } from './csv-parser';
+import { parseCSV, parseSortableNumber, parseTranscript, serializeCSV, TranscriptCue, TranscriptFormat } from './csv-parser';
 import { formatJson, minifyJson, validateJson } from './json-utils';
 import { SUPPORT_ISSUES_URL } from './support';
 
@@ -104,10 +104,10 @@ class CSVView extends TextFileView {
             const aVal = a.row[this.sortColumn] || '';
             const bVal = b.row[this.sortColumn] || '';
 
-            const aNum = parseFloat(aVal.replace(/[,$%]/g, ''));
-            const bNum = parseFloat(bVal.replace(/[,$%]/g, ''));
+            const aNum = parseSortableNumber(aVal);
+            const bNum = parseSortableNumber(bVal);
 
-            if (!isNaN(aNum) && !isNaN(bNum)) {
+            if (aNum !== null && bNum !== null) {
                 return this.sortAscending ? aNum - bNum : bNum - aNum;
             }
 

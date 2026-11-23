@@ -75,6 +75,20 @@ export function serializeCSV(rows: string[][]): string {
     ).join('\n');
 }
 
+/**
+ * Parse a cell value as a number for sorting, or return null if it is not one.
+ * The whole value must be a number (after removing the `,`, `$` and `%`
+ * symbols), so values that only start with digits, like dates (2026-07-14),
+ * are not treated as numbers.
+ */
+export function parseSortableNumber(value: string): number | null {
+    const cleaned = value.replace(/[,$%]/g, '').trim();
+    if (!/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(cleaned)) {
+        return null;
+    }
+    return Number(cleaned);
+}
+
 export type TranscriptFormat = 'srt' | 'vtt';
 
 export interface TranscriptCue {
